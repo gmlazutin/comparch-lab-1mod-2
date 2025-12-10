@@ -4,7 +4,7 @@ import os
 import signal
 import sys
 
-SOCKET_PATH = "/tmp/ping_pong.sock"
+SOCKET_PATH = "/tmp/ipc_pingpong.sock"
 
 shutdown_requested = False
 current_conn = None
@@ -79,7 +79,7 @@ def main():
                     message = data.decode("utf-8", errors="replace").rstrip("\n")
                     print(f"[server] Received message: {message!r}")
 
-                    try:M
+                    try:
                         conn.sendall(b"pong\n")
                     except Exception as e:
                         print(f"[server] Failed to send response: {e}")
