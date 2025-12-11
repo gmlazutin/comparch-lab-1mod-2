@@ -4,11 +4,15 @@ import socket
 import signal
 import tempfile
 from pathlib import Path
+import argparse
 from threading import Thread, Lock
 
 class PingPongServer:
-    def __init__(self, accept_timeout=1, client_timeout=30):
-        self.socket_path = Path(tempfile.mktemp(prefix='lab1mod2_', suffix='.sock'))
+    def __init__(self, accept_timeout=1, client_timeout=30, socket_path=None):
+        if not socket_path:
+            self.socket_path = Path(tempfile.mktemp(prefix='lab1mod2_', suffix='.sock'))
+        else:
+            self.socket_path = socket_path
         self.server_socket = None
         self.running = False
         self.threads = []
@@ -91,7 +95,24 @@ class PingPongServer:
             t.join(timeout=1)
 
 def main():
-    server = PingPongServer()
+    parser = argparse.ArgumentParser(description="PingPong Unix socket server")
+    parser.add_argument(
+        "-s", "--socket",
+        type=str,
+        required=False,
+        help="Path to new Unix socket file"
+    )
+    args = parser.parse_args()
+
+    socket_path = None
+    if args.socket:
+        try:
+            socket_path = Path(args.socket)
+        except:
+            print("[server] Invalid socket path!")
+            return
+
+    server = PingPongServer(socket_path=socket_path)
     print(f"Starting server on {server.socket_path.absolute()}...")
     try:
         try:
