@@ -81,7 +81,10 @@ class PingPongServer:
                 self.server_socket.shutdown(socket.SHUT_RDWR)
             except OSError:
                 pass
-            self.server_socket.close()
+            try:
+                self.server_socket.close()
+            except Exception:
+                pass
             self.server_socket = None
         self.cleanup_socket()
         for t in self.threads:
@@ -91,13 +94,14 @@ def main():
     server = PingPongServer()
     print(f"Starting server on {server.socket_path.absolute()}...")
     try:
-        server.start()
+        try:
+            server.start()
+        finally:
+            server.stop()
     except KeyboardInterrupt:
         print("\n[server] Exiting...")
     except Exception as e:
         print(f"[server] An error has occurred: {e}")
-    finally:
-        server.stop()
 
 if __name__ == "__main__":
     main()
