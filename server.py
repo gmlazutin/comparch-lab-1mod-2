@@ -4,12 +4,17 @@ import socket
 import signal
 import tempfile
 from pathlib import Path
+from threading import Thread, Lock
 
 class PingPongServer:
-    def __init__(self):
+    def __init__(self, accept_timeout=1, client_timeout=30):
         self.socket_path = Path(tempfile.mktemp(prefix='lab1mod2_', suffix='.sock'))
         self.server_socket = None
         self.running = False
+        self.threads = []
+        self.lock = Lock()
+        self.accept_timeout = accept_timeout
+        self.client_timeout = client_timeout
 
     def cleanup_socket(self):
         if self.socket_path.exists():
@@ -20,38 +25,56 @@ class PingPongServer:
         self.server_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server_socket.bind(str(self.socket_path))
-        self.server_socket.listen(5)
+        self.server_socket.listen(10)
         os.chmod(self.socket_path, 0o600)
+        self.server_socket.settimeout(self.accept_timeout)
         self.running = True
 
         try:
             while self.running:
                 try:
                     client_socket, _ = self.server_socket.accept()
+                    client_socket.settimeout(self.client_timeout)
+                    thread = Thread(target=self.handle_client_loop, args=(client_socket,), daemon=True)
+                    thread.start()
+                    self.threads.append(thread)
+                except socket.timeout:
+                    continue
                 except OSError:
                     break
-                with client_socket:
-                    self.handle_client(client_socket)
         except KeyboardInterrupt:
             pass
         finally:
             self.stop()
 
-    def handle_client(self, client_socket: socket.socket):
+    def handle_client_loop(self, client_socket: socket.socket):
         client_id = f"client-{client_socket.fileno()}"
+        with self.lock:
+            print(f"[serverloop] {client_id} has connected")
         try:
-            with client_socket.makefile('rw', encoding='utf-8', newline='') as fileobj:
-                data = fileobj.readline()
-                if data:
-                    print(f"[serverloop] {client_id} says: {data.strip()}")
-                    fileobj.write("pong\n")
-                    fileobj.flush()
-                else:
-                    print(f"[serverloop] {client_id} has disconnected")
+            with client_socket:
+                with client_socket.makefile('rw', encoding='utf-8', newline='') as fileobj:
+                    while self.running:
+                        try:
+                            data = fileobj.readline()
+                        except socket.timeout:
+                            with self.lock:
+                                print(f"[serverloop] {client_id} timed out")
+                            break
+                        if not data:
+                            with self.lock:
+                                print(f"[serverloop] {client_id} has disconnected")
+                            break
+                        with self.lock:
+                            print(f"[serverloop] {client_id} says: {data.strip()}")
+                        fileobj.write("pong\n")
+                        fileobj.flush()
         except (ConnectionError, BrokenPipeError, ConnectionResetError) as e:
-            print(f"[serverloop] {client_id} connection reset: {e}")
+            with self.lock:
+                print(f"[serverloop] {client_id} connection reset: {e}")
         except Exception as e:
-            print(f"[serverloop] {client_id} unexpected error: {e}")
+            with self.lock:
+                print(f"[serverloop] {client_id} unexpected error: {e}")
 
     def stop(self):
         self.running = False
@@ -62,13 +85,14 @@ class PingPongServer:
                 pass
             self.server_socket.close()
         self.cleanup_socket()
+        for t in self.threads:
+            t.join()
 
 def setup_signal_handlers(server: PingPongServer):
     def signal_handler(signum, _):
         print(f"\nGot signal {signum}, shutting down server...")
         server.stop()
     signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
 
 def main():
     server = PingPongServer()
