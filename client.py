@@ -2,8 +2,6 @@
 import socket
 import argparse
 import time
-import signal
-import sys
 from pathlib import Path
 
 class PingPongClient:
@@ -24,8 +22,6 @@ class PingPongClient:
                 self.client_socket.connect(str(self.socket_path))
                 self.file_obj = self.client_socket.makefile('rw', encoding='utf-8', newline='')
                 return True
-            except KeyboardInterrupt:
-                return False
             except (ConnectionRefusedError, FileNotFoundError, socket.timeout):
                 retries += 1
                 time.sleep(self.retries_timeout)
@@ -61,17 +57,14 @@ def main():
         return
 
     client = PingPongClient(socket_path)
-    if not client.connect():
-        print("[client] Could not connect, exiting!")
-        return
 
     try:
+        if not client.connect():
+            print("[client] Could not connect, exiting!")
+            return
+    
         while True:
-            try:
-                msg = input("> ")
-            except (KeyboardInterrupt, EOFError):
-                print("\n[client] Exiting...")
-                break
+            msg = input("> ")
             if not msg:
                 continue
             try:
@@ -89,6 +82,8 @@ def main():
                     print("[client] Reconnect failed, exiting!")
                     break
                 print("[client] Reconnected!")
+    except (KeyboardInterrupt, EOFError):
+        print("\n[client] Exiting...")
     except Exception as e:
         print(f"[client] An error has occurred: {e}")
     finally:

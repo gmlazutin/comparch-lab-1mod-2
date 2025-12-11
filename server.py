@@ -42,8 +42,6 @@ class PingPongServer:
                     continue
                 except OSError:
                     break
-        except KeyboardInterrupt:
-            pass
         finally:
             self.stop()
 
@@ -84,21 +82,22 @@ class PingPongServer:
             except OSError:
                 pass
             self.server_socket.close()
+            self.server_socket = None
         self.cleanup_socket()
         for t in self.threads:
-            t.join()
-
-def setup_signal_handlers(server: PingPongServer):
-    def signal_handler(signum, _):
-        print(f"\nGot signal {signum}, shutting down server...")
-        server.stop()
-    signal.signal(signal.SIGINT, signal_handler)
+            t.join(timeout=1)
 
 def main():
     server = PingPongServer()
-    setup_signal_handlers(server)
     print(f"Starting server on {server.socket_path.absolute()}...")
-    server.start()
+    try:
+        server.start()
+    except KeyboardInterrupt:
+        print("\n[server] Exiting...")
+    except Exception as e:
+        print(f"[server] An error has occurred: {e}")
+    finally:
+        server.stop()
 
 if __name__ == "__main__":
     main()
