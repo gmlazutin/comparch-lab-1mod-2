@@ -1,103 +1,80 @@
 #!/usr/bin/env python3
-import socket
 import os
+import socket
 import signal
-import sys
+import tempfile
+from pathlib import Path
 
-SOCKET_PATH = "/tmp/ping_pong.sock"
+class PingPongServer:
+    def __init__(self):
+        self.socket_path = Path(tempfile.mktemp(prefix='lab1mod2_', suffix='.sock'))
+        self.server_socket = None
+        self.running = False
 
-shutdown_requested = False
-current_conn = None
-server_sock = None
+    def cleanup_socket(self):
+        if self.socket_path.exists():
+            self.socket_path.unlink()
 
+    def start(self):
+        self.cleanup_socket()
+        self.server_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server_socket.bind(str(self.socket_path))
+        self.server_socket.listen(5)
+        os.chmod(self.socket_path, 0o600)
+        self.running = True
 
-def handle_shutdown(signum, frame):
-    global shutdown_requested, current_conn
-    print("\n[server] Shutdown signal received, finishing up...")
-    shutdown_requested = True
-    if current_conn is not None:
         try:
-            current_conn.sendall(b"SERVER_SHUTDOWN\n")
-        except Exception:
+            while self.running:
+                try:
+                    client_socket, _ = self.server_socket.accept()
+                except OSError:
+                    break
+                with client_socket:
+                    self.handle_client(client_socket)
+        except KeyboardInterrupt:
             pass
+        finally:
+            self.stop()
 
-
-def cleanup_socket_file():
-    if os.path.exists(SOCKET_PATH):
+    def handle_client(self, client_socket: socket.socket):
+        client_id = f"client-{client_socket.fileno()}"
         try:
-            os.unlink(SOCKET_PATH)
-            print(f"[server] Removed existing socket file: {SOCKET_PATH}")
+            with client_socket.makefile('rw', encoding='utf-8', newline='') as fileobj:
+                data = fileobj.readline()
+                if data:
+                    print(f"[serverloop] {client_id} says: {data.strip()}")
+                    fileobj.write("pong\n")
+                    fileobj.flush()
+                else:
+                    print(f"[serverloop] {client_id} has disconnected")
+        except (ConnectionError, BrokenPipeError, ConnectionResetError) as e:
+            print(f"[serverloop] {client_id} connection reset: {e}")
         except Exception as e:
-            print(f"[server] Failed to remove socket file: {e}", file=sys.stderr)
+            print(f"[serverloop] {client_id} unexpected error: {e}")
 
+    def stop(self):
+        self.running = False
+        if self.server_socket:
+            try:
+                self.server_socket.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            self.server_socket.close()
+        self.cleanup_socket()
+
+def setup_signal_handlers(server: PingPongServer):
+    def signal_handler(signum, _):
+        print(f"\nGot signal {signum}, shutting down server...")
+        server.stop()
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
 
 def main():
-    global shutdown_requested, current_conn, server_sock
-
-    signal.signal(signal.SIGINT, handle_shutdown)
-    signal.signal(signal.SIGTERM, handle_shutdown)
-
-    cleanup_socket_file()
-
-    server_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-
-    try:
-        server_sock.bind(SOCKET_PATH)
-    except OSError as e:
-        print(f"[server] Failed to bind to {SOCKET_PATH}: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    server_sock.listen(1)
-    print(f"[server] Server started. Listening on Unix socket: {SOCKET_PATH}")
-
-    try:
-        while not shutdown_requested:
-            print("[server] Waiting for a client to connect...")
-
-            try:
-                conn, _ = server_sock.accept()
-            except OSError:
-                if shutdown_requested:
-                    break
-                continue
-
-            current_conn = conn
-            print("[server] Client connected")
-
-            with conn:
-                while not shutdown_requested:
-                    try:
-                        data = conn.recv(1024)
-                    except OSError as e:
-                        print(f"[server] Error while receiving data: {e}", file=sys.stderr)
-                        break
-
-                    if not data:
-                        print("[server] Client disconnected")
-                        break
-
-                    message = data.decode("utf-8", errors="replace").rstrip("\n")
-                    print(f"[server] Received message: {message!r}")
-
-                    try:M
-                        conn.sendall(b"pong\n")
-                    except Exception as e:
-                        print(f"[server] Failed to send response: {e}")
-                        break
-
-            current_conn = None
-
-    finally:
-        print("[server] Shutting down server...")
-        try:
-            if server_sock is not None:
-                server_sock.close()
-        except Exception:
-            pass
-
-        cleanup_socket_file()
-        print("[server] Server stopped.")
-
+    server = PingPongServer()
+    setup_signal_handlers(server)
+    print(f"Starting server on {server.socket_path.absolute()}...")
+    server.start()
 
 if __name__ == "__main__":
     main()
